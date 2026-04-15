@@ -1,5 +1,5 @@
 //! Process management syscalls
-use crate::{mm::{PageTable, VirtAddr, translated_byte_buffer}, task::{change_program_brk, current_user_token, exit_current_and_run_next, get_syscall_count, mmap_current, munmap, suspend_current_and_run_next}, timer::get_time_us};
+use crate::{mm::{PageTable, PTEFlags, VirtAddr, translated_byte_buffer}, task::{change_program_brk, current_user_token, exit_current_and_run_next, get_syscall_count, mmap_current, munmap, suspend_current_and_run_next}, timer::get_time_us};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -60,11 +60,12 @@ pub fn sys_trace(trace_request: usize, id: usize, data: usize) -> isize {
             match page_table.translate(vpn) {
                 None => -1,
                 Some(pte) => {
+                    let is_user = (pte.flags() & PTEFlags::U) != PTEFlags::empty();
                     match trace_request {
-                        0 if pte.readable() => {
+                        0 if is_user && pte.readable() => {
                             pte.ppn().get_bytes_array()[offset] as isize
                         }
-                        1 if pte.writable() => {
+                        1 if is_user && pte.writable() => {
                             pte.ppn().get_bytes_array()[offset] = data as u8;
                             0
                         }
