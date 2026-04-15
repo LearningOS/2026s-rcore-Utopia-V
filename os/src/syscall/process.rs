@@ -1,5 +1,5 @@
 //! Process management syscalls
-use crate::task::{change_program_brk, exit_current_and_run_next, suspend_current_and_run_next};
+use crate::{mm::{PageTable, VirtAddr, translated_byte_buffer}, task::{change_program_brk, current_user_token, exit_current_and_run_next, mmap_current, munmap, suspend_current_and_run_next}, timer::get_time_us};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -22,31 +22,73 @@ pub fn sys_yield() -> isize {
     0
 }
 
-/// YOUR JOB: get time with second and microsecond
-/// HINT: You might reimplement it with virtual memory management.
-/// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!("kernel: sys_get_time");
-    -1
+
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
+    let time_us = get_time_us();
+    let sec = time_us / 1_000_000;
+    let usec = time_us % 1_000_000;
+    let tv = TimeVal {
+        sec,
+        usec,
+    };
+    let tv_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &tv as *const TimeVal as *const u8, 
+            core::mem::size_of::<TimeVal>(),
+        )
+    };
+    let slices = translated_byte_buffer(current_user_token(), ts as *const u8, core::mem::size_of::<TimeVal>(),);
+
+    let mut offset = 0;
+    for slice in slices {
+       slice.copy_from_slice(&tv_bytes[offset..offset + slice.len()]);
+       offset += slice.len(); 
+    }
+    0
 }
 
-/// TODO: Finish sys_trace to pass testcases
-/// HINT: You might reimplement it with virtual memory management.
-pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
+
+pub fn sys_trace(trace_request: usize, id: usize, data: usize) -> isize {
     trace!("kernel: sys_trace");
-    -1
+    let token = current_user_token();
+    let page_table = PageTable::from_token(token);
+    let vpn = VirtAddr::from(id).floor();
+    let offset = VirtAddr::from(id).page_offset();
+
+    match page_table.translate(vpn) {
+        None => -1,
+        Some(pte) => {
+            match trace_request {
+                0 => {
+                    if pte.readable() {
+                        pte.ppn().get_bytes_array()[offset] as isize
+                    } else {
+                        -1
+                    }
+                }
+                1 => {
+                    if pte.writable() {
+                        pte.ppn().get_bytes_array()[offset] = data as u8;
+                        0
+                    } else {
+                        -1
+                    }
+                }
+                _ => -1,
+            }
+        }
+    }
 }
 
-// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!("kernel: sys_mmap NOT IMPLEMENTED YET!");
-    -1
+pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
+    trace!("kernel: sys_mmap");
+    mmap_current(start, len, port)
 }
 
 // YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!("kernel: sys_munmap NOT IMPLEMENTED YET!");
-    -1
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    trace!("kernel: sys_munmap");
+    munmap(start, len)
 }
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {

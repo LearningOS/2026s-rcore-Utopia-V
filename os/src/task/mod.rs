@@ -153,6 +153,20 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// Map a new virtual memory area for the current running task
+    pub fn mmap_current(&self, start: usize, len: usize, port: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].memory_set.mmap(start, len, port)
+    }
+
+    /// Unmap a virtual memory area for the current running task
+    pub fn munmap_current(&self, start: usize, len: usize) -> isize {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].memory_set.munmap(start, len)
+    }
 }
 
 /// Run the first task in task list.
@@ -201,4 +215,14 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Map a new virtual memory area for the current running task
+pub fn mmap_current(start: usize, len: usize, port: usize) -> isize {
+    TASK_MANAGER.mmap_current(start, len, port)
+}
+
+/// Unmap a virtual memory area for the current running task
+pub fn munmap(start: usize, len: usize) -> isize {
+    TASK_MANAGER.munmap_current(start, len)
 }
