@@ -268,7 +268,6 @@ impl MemorySet {
         let start_va = VirtAddr(start);
         let end_va = VirtAddr(start + len);
         if start_va.page_offset() != 0 { return -1; }
-        if end_va.page_offset() != 0 { return -1; }
         if port == 0 { return -1; }
         if port & !0x7 != 0 { return -1; }
 
@@ -291,7 +290,6 @@ impl MemorySet {
         let start_va = VirtAddr(start);
         let end_va = VirtAddr(start + len);
         if start_va.page_offset() != 0 { return -1; }
-        if end_va.page_offset() != 0 { return -1; }
 
         let mut found: Option<usize> = None;
         for (i, area) in self.areas.iter().enumerate() {

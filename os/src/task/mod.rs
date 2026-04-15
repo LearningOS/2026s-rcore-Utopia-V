@@ -167,6 +167,20 @@ impl TaskManager {
         let cur = inner.current_task;
         inner.tasks[cur].memory_set.munmap(start, len)
     }
+
+    /// Increment syscall count for current task
+    pub fn increment_syscall_count(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].syscall_counts[syscall_id] += 1;
+    }
+
+    /// Get syscall count for current task
+    pub fn get_syscall_count(&self, syscall_id: usize) -> usize {
+        let inner = self.inner.exclusive_access();
+        let cur = inner.current_task;
+        inner.tasks[cur].syscall_counts[syscall_id]
+    }
 }
 
 /// Run the first task in task list.
@@ -225,4 +239,14 @@ pub fn mmap_current(start: usize, len: usize, port: usize) -> isize {
 /// Unmap a virtual memory area for the current running task
 pub fn munmap(start: usize, len: usize) -> isize {
     TASK_MANAGER.munmap_current(start, len)
+}
+
+/// Increment syscall count for current task
+pub fn increment_syscall_count(syscall_id: usize) {
+    TASK_MANAGER.increment_syscall_count(syscall_id)
+}
+
+/// Get syscall count for current task
+pub fn get_syscall_count(syscall_id: usize) -> usize {
+    TASK_MANAGER.get_syscall_count(syscall_id)
 }
