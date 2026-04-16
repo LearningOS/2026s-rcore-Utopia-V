@@ -63,6 +63,10 @@ pub struct TaskControlBlockInner {
     /// It is set when active exit or execution error occurs
     pub exit_code: i32,
 
+    pub priority: usize,
+
+    pub stride: usize,
+
     /// Heap bottom
     pub heap_bottom: usize,
 
@@ -116,6 +120,8 @@ impl TaskControlBlock {
                     parent: None,
                     children: Vec::new(),
                     exit_code: 0,
+                    priority: 16,
+                    stride: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
                 })
@@ -189,6 +195,8 @@ impl TaskControlBlock {
                     parent: Some(Arc::downgrade(self)),
                     children: Vec::new(),
                     exit_code: 0,
+                    priority: 16,
+                    stride: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
                 })
