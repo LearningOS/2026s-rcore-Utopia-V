@@ -318,6 +318,52 @@ impl MemorySet {
             false
         }
     }
+
+    /// mmap: map a new memory area
+    pub fn mmap(&mut self, start: usize, len: usize, port: usize) -> isize {
+        let start_va = VirtAddr(start);
+        let end_va = VirtAddr(start + len);
+        if start_va.page_offset() != 0 {
+            return -1;
+        }
+        if port == 0 || port & !0x7 != 0 {
+            return -1;
+        }
+        let perm = MapPermission::from_bits(((port << 1) as u8) | MapPermission::U.bits).unwrap();
+        for area in &self.areas {
+            if area.vpn_range.get_start() < end_va.ceil()
+                && start_va.floor() < area.vpn_range.get_end()
+            {
+                return -1;
+            }
+        }
+        self.push(MapArea::new(start_va, end_va, MapType::Framed, perm), None);
+        0
+    }
+
+    /// munmap: unmap a memory area
+    pub fn munmap(&mut self, start: usize, len: usize) -> isize {
+        let start_va = VirtAddr(start);
+        let end_va = VirtAddr(start + len);
+        if start_va.page_offset() != 0 {
+            return -1;
+        }
+        let mut found: Option<usize> = None;
+        for (i, area) in self.areas.iter().enumerate() {
+            if area.vpn_range.get_start() == start_va.floor()
+                && area.vpn_range.get_end() == end_va.ceil()
+            {
+                found = Some(i);
+                break;
+            }
+        }
+        if let Some(i) = found {
+            self.areas[i].unmap(&mut self.page_table);
+            self.areas.remove(i);
+            return 0;
+        }
+        -1
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {

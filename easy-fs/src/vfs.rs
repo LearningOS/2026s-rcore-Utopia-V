@@ -12,6 +12,7 @@ pub struct Inode {
     block_offset: usize,
     fs: Arc<Mutex<EasyFileSystem>>,
     block_device: Arc<dyn BlockDevice>,
+    inode_id: u32,
 }
 
 impl Inode {
@@ -21,12 +22,14 @@ impl Inode {
         block_offset: usize,
         fs: Arc<Mutex<EasyFileSystem>>,
         block_device: Arc<dyn BlockDevice>,
+        inode_id: u32,
     ) -> Self {
         Self {
             block_id: block_id as usize,
             block_offset,
             fs,
             block_device,
+            inode_id,
         }
     }
     /// Call a function over a disk inode to read it
@@ -69,6 +72,7 @@ impl Inode {
                     block_offset,
                     self.fs.clone(),
                     self.block_device.clone(),
+                    inode_id,
                 ))
             })
         })
@@ -135,6 +139,7 @@ impl Inode {
             block_offset,
             self.fs.clone(),
             self.block_device.clone(),
+            new_inode_id,
         )))
         // release efs lock automatically by compiler
     }
@@ -181,6 +186,79 @@ impl Inode {
                 fs.dealloc_data(data_block);
             }
         });
+        block_cache_sync_all();
+    }
+    /// 获取inode编号
+    pub fn inode_id(&self) -> usize {
+        self.inode_id as usize
+    }
+    /// get the nlink count of this inode
+    pub fn get_nlink(&self) -> u32 {
+        self.read_disk_inode(|disk_inode| disk_inode.nlink)
+    }
+    /// 创建新的目录指向自己
+    pub fn link(&self, name: &str, inode_id: u32) {
+        let mut fs = self.fs.lock();
+        self.modify_disk_inode(|disk_inode| {
+            let file_count = (disk_inode.size as usize) / DIRENT_SZ;
+            let new_size = (file_count + 1) * DIRENT_SZ;
+            self.increase_size(new_size as u32, disk_inode, &mut fs);
+            let dirent = DirEntry::new(name, inode_id);
+            disk_inode.write_at(
+                file_count * DIRENT_SZ, 
+                dirent.as_bytes(), 
+                &self.block_device,
+            );
+        });
+        let (block_id, block_offset) = fs.get_disk_inode_pos(inode_id);
+        get_block_cache(block_id as usize, Arc::clone(&self.block_device))
+            .lock()
+            .modify(block_offset, |disk_inode: &mut DiskInode| {
+                disk_inode.nlink += 1;
+            });
+        
+        block_cache_sync_all();
+    }
+    /// Remove a directory entry and decrement nlink
+    pub fn unlink(&self, name: &str) {
+        let fs = self.fs.lock();
+        let mut target_inode_id: Option<u32> = None;
+        self.modify_disk_inode(|disk_inode| {
+            let file_count = (disk_inode.size as usize) / DIRENT_SZ;
+            let mut dirent = DirEntry::empty();
+            for i in 0..file_count {
+                disk_inode.read_at(i * DIRENT_SZ, dirent.as_bytes_mut(), &self.block_device);
+                if dirent.name() == name {
+                    target_inode_id = Some(dirent.inode_id());
+                    // move last entry to this slot (avoid gap)
+                    if i != file_count - 1 {
+                        let mut last_dirent = DirEntry::empty();
+                        disk_inode.read_at(
+                            (file_count - 1) * DIRENT_SZ,
+                            last_dirent.as_bytes_mut(),
+                            &self.block_device,
+                        );
+                        disk_inode.write_at(
+                            i * DIRENT_SZ,
+                            last_dirent.as_bytes(),
+                            &self.block_device,
+                        );
+                    }
+                    // shrink directory size
+                    disk_inode.size -= DIRENT_SZ as u32;
+                    break;
+                }
+            }
+        });
+        // decrement nlink on target inode
+        if let Some(inode_id) = target_inode_id {
+            let (block_id, block_offset) = fs.get_disk_inode_pos(inode_id);
+            get_block_cache(block_id as usize, Arc::clone(&self.block_device))
+                .lock()
+                .modify(block_offset, |disk_inode: &mut DiskInode| {
+                    disk_inode.nlink -= 1;
+                });
+        }
         block_cache_sync_all();
     }
 }
