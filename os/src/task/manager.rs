@@ -25,9 +25,18 @@ impl TaskManager {
     pub fn add(&mut self, task: Arc<TaskControlBlock>) {
         self.ready_queue.push_back(task);
     }
-    /// Take a process out of the ready queue
+    /// Take a process out of the ready queue (stride scheduler)
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        self.ready_queue.pop_front()
+        if self.ready_queue.is_empty() {
+            return None;
+        }
+        let (idx, _) = self
+            .ready_queue
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, task)| task.inner_exclusive_access().stride)
+            .unwrap();
+        Some(self.ready_queue.remove(idx).unwrap())
     }
 }
 
