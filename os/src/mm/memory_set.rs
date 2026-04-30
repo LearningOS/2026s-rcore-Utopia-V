@@ -1,10 +1,8 @@
-//! Address Space [`MemorySet`] management of Process
-
 use super::{frame_alloc, FrameTracker};
 use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
-use crate::config::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE};
+use crate::config::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT_BASE, USER_STACK_SIZE};
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -39,10 +37,8 @@ pub fn kernel_token() -> usize {
 
 /// address space
 pub struct MemorySet {
-    /// page table
-    pub page_table: PageTable,
-    /// areas
-    pub areas: Vec<MapArea>,
+    page_table: PageTable,
+    areas: Vec<MapArea>,
 }
 
 impl MemorySet {
@@ -53,7 +49,7 @@ impl MemorySet {
             areas: Vec::new(),
         }
     }
-    /// Get he page table token
+    /// Get the page table token
     pub fn token(&self) -> usize {
         self.page_table.token()
     }
@@ -79,9 +75,6 @@ impl MemorySet {
         {
             area.unmap(&mut self.page_table);
             self.areas.remove(idx);
-            unsafe {
-                asm!("sfence.vma");
-            }
         }
     }
     /// Add a new MapArea into this MemorySet.
@@ -218,11 +211,42 @@ impl MemorySet {
         }
         // map user stack with U flags
         let max_end_va: VirtAddr = max_end_vpn.into();
-        let mut user_stack_base: usize = max_end_va.into();
-        user_stack_base += PAGE_SIZE;
+        let mut user_stack_bottom: usize = max_end_va.into();
+        // guard page
+        user_stack_bottom += PAGE_SIZE;
+        let user_stack_top = user_stack_bottom + USER_STACK_SIZE;
+        memory_set.push(
+            MapArea::new(
+                user_stack_bottom.into(),
+                user_stack_top.into(),
+                MapType::Framed,
+                MapPermission::R | MapPermission::W | MapPermission::U,
+            ),
+            None,
+        );
+        // used in sbrk
+        memory_set.push(
+            MapArea::new(
+                user_stack_top.into(),
+                user_stack_top.into(),
+                MapType::Framed,
+                MapPermission::R | MapPermission::W | MapPermission::U,
+            ),
+            None,
+        );
+        // map TrapContext
+        memory_set.push(
+            MapArea::new(
+                TRAP_CONTEXT_BASE.into(),
+                TRAMPOLINE.into(),
+                MapType::Framed,
+                MapPermission::R | MapPermission::W,
+            ),
+            None,
+        );
         (
             memory_set,
-            user_stack_base,
+            user_stack_top,
             elf.header.pt2.entry_point() as usize,
         )
     }
@@ -293,13 +317,55 @@ impl MemorySet {
             false
         }
     }
-}
 
+    /// mmap: map a region of virtual memory
+    pub fn mmap(&mut self, start: usize, len: usize, port: usize) -> isize {
+        let start_va = VirtAddr(start);
+        let end_va = VirtAddr(start + len);
+        if start_va.page_offset() != 0 {
+            return -1;
+        }
+        if port == 0 || port & !0x7 != 0 {
+            return -1;
+        }
+        let perm = MapPermission::from_bits(((port << 1) as u8) | MapPermission::U.bits).unwrap();
+        for area in &self.areas {
+            if area.vpn_range.get_start() < end_va.ceil() && start_va.floor() < area.vpn_range.get_end() {
+                return -1;
+            }
+        }
+        self.push(MapArea::new(start_va, end_va, MapType::Framed, perm), None);
+        0
+    }
+
+    /// munmap: unmap a region of virtual memory
+    pub fn munmap(&mut self, start: usize, len: usize) -> isize {
+        let start_va = VirtAddr(start);
+        let end_va = VirtAddr(start + len);
+        if start_va.page_offset() != 0 {
+            return -1;
+        }
+        let mut found: Option<usize> = None;
+        for (i, area) in self.areas.iter().enumerate() {
+            if area.vpn_range.get_start() == start_va.floor() && area.vpn_range.get_end() == end_va.ceil() {
+                found = Some(i);
+                break;
+            }
+        }
+        if let Some(i) = found {
+            self.areas[i].unmap(&mut self.page_table);
+            self.areas.remove(i);
+            return 0;
+        }
+        -1
+    }
+}
+/// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
-    pub vpn_range: VPNRange,
-    pub data_frames: BTreeMap<VirtPageNum, FrameTracker>,
-    pub map_type: MapType,
-    pub map_perm: MapPermission,
+    vpn_range: VPNRange,
+    data_frames: BTreeMap<VirtPageNum, FrameTracker>,
+    map_type: MapType,
+    map_perm: MapPermission,
 }
 
 impl MapArea {
@@ -396,6 +462,7 @@ impl MapArea {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
+/// map type for memory set: identical or framed
 pub enum MapType {
     Identical,
     Framed,

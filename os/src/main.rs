@@ -26,15 +26,11 @@
 #![feature(alloc_error_handler)]
 
 #[macro_use]
+extern crate bitflags;
+#[macro_use]
 extern crate log;
 
 extern crate alloc;
-
-#[macro_use]
-extern crate bitflags;
-
-#[path = "boards/qemu.rs"]
-mod board;
 
 #[macro_use]
 mod console;
@@ -54,7 +50,7 @@ pub mod trap;
 use core::arch::global_asm;
 
 global_asm!(include_str!("entry.asm"));
-
+/// clear BSS segment
 fn clear_bss() {
     extern "C" {
         fn sbss();
