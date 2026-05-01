@@ -19,7 +19,7 @@ pub struct TimeVal {
 }
 
 pub fn sys_exit(exit_code: i32) -> ! {
-    trace!("kernel:pid[{}] sys_exit",current_task().unwrap().pid.0);
+    trace!("kernel:pid[{}] sys_exit",current_task().unwrap().process.pid.0);
     exit_current_and_run_next(exit_code);
     panic!("Unreachable in sys_exit!");
 }
@@ -31,15 +31,15 @@ pub fn sys_yield() -> isize {
 }
 
 pub fn sys_getpid() -> isize {
-	trace!("kernel: sys_getpid pid:{}", current_task().unwrap().pid.0);
-    current_task().unwrap().pid.0 as isize
+	trace!("kernel: sys_getpid pid:{}", current_task().unwrap().process.pid.0);
+    current_task().unwrap().process.pid.0 as isize
 }
 
 pub fn sys_fork() -> isize {
-	trace!("kernel:pid[{}] sys_fork", current_task().unwrap().pid.0);
+	trace!("kernel:pid[{}] sys_fork", current_task().unwrap().process.pid.0);
     let current_task = current_task().unwrap();
     let new_task = current_task.fork();
-    let new_pid = new_task.pid.0;
+    let new_pid = new_task.process.pid.0;
     // modify trap context of new_task, because it returns immediately after switching
     let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
     // we do not have to move to next instruction since we have done it before
@@ -51,7 +51,7 @@ pub fn sys_fork() -> isize {
 }
 
 pub fn sys_exec(path: *const u8, mut args: *const usize) -> isize {
-    trace!("kernel:pid[{}] sys_exec", current_task().unwrap().pid.0);
+    trace!("kernel:pid[{}] sys_exec", current_task().unwrap().process.pid.0);
     let token = current_user_token();
     let path = translated_str(token, path);
     let mut args_vec: Vec<String> = Vec::new();
@@ -85,7 +85,7 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
     // find a child process
 
     // ---- access current PCB exclusively
-    let mut inner = task.inner_exclusive_access();
+    let mut inner = task.process.inner_exclusive_access();
     if !inner
         .children
         .iter()
@@ -116,11 +116,11 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 }
 
 pub fn sys_kill(pid: usize, signum: i32) -> isize {
-	trace!("kernel:pid[{}] sys_kill", current_task().unwrap().pid.0);
+	trace!("kernel:pid[{}] sys_kill", current_task().unwrap().process.pid.0);
     if let Some(task) = pid2task(pid) {
         if let Some(flag) = SignalFlags::from_bits(1 << signum) {
             // insert the signal if legal
-            let mut task_ref = task.inner_exclusive_access();
+            let mut task_ref = task.process.inner_exclusive_access();
             if task_ref.signals.contains(flag) {
                 return -1;
             }
@@ -138,7 +138,7 @@ pub fn sys_kill(pid: usize, signum: i32) -> isize {
 pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     let ticks = timer::get_time_us();
     let task = current_task().unwrap();
-    let token = task.inner_exclusive_access().memory_set.token();
+    let token = task.process.inner_exclusive_access().memory_set.token();
     let buffers = translated_byte_buffer(token, ts as *const u8, core::mem::size_of::<TimeVal>());
     let ts_ref = unsafe { &mut *(buffers[0].as_ptr() as *mut TimeVal) };
     ts_ref.sec = ticks / 1_000_000;
@@ -149,20 +149,20 @@ pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
 /// Implement mmap.
 pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
     let task = current_task().unwrap();
-    let mut inner = task.inner_exclusive_access();
+    let mut inner = task.process.inner_exclusive_access();
     inner.memory_set.mmap(start, len, port)
 }
 
 /// Implement munmap.
 pub fn sys_munmap(start: usize, len: usize) -> isize {
     let task = current_task().unwrap();
-    let mut inner = task.inner_exclusive_access();
+    let mut inner = task.process.inner_exclusive_access();
     inner.memory_set.munmap(start, len)
 }
 
 /// change data segment size
 pub fn sys_sbrk(size: i32) -> isize {
-    trace!("kernel:pid[{}] sys_sbrk", current_task().unwrap().pid.0);
+    trace!("kernel:pid[{}] sys_sbrk", current_task().unwrap().process.pid.0);
     if let Some(old_brk) = current_task().unwrap().change_program_brk(size) {
         old_brk as isize
     } else {
@@ -181,7 +181,7 @@ pub fn sys_spawn(path: *const u8) -> isize {
         new_task.exec(all_data.as_slice(), Vec::new());
         let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
         trap_cx.x[10] = 0;
-        let new_pid = new_task.pid.0;
+        let new_pid = new_task.process.pid.0;
         add_task(new_task);
         new_pid as isize
     } else {
@@ -201,9 +201,9 @@ pub fn sys_set_priority(prio: isize) -> isize {
 }
 
 pub fn sys_sigprocmask(mask: u32) -> isize {
-    trace!("kernel:pid[{}] sys_sigprocmask", current_task().unwrap().pid.0);
+    trace!("kernel:pid[{}] sys_sigprocmask", current_task().unwrap().process.pid.0);
     if let Some(task) = current_task() {
-        let mut inner = task.inner_exclusive_access();
+        let mut inner = task.process.inner_exclusive_access();
         let old_mask = inner.signal_mask;
         if let Some(flag) = SignalFlags::from_bits(mask) {
             inner.signal_mask = flag;
@@ -217,13 +217,16 @@ pub fn sys_sigprocmask(mask: u32) -> isize {
 }
 
 pub fn sys_sigreturn() -> isize {
-    trace!("kernel:pid[{}] sys_sigreturn", current_task().unwrap().pid.0);
+    trace!("kernel:pid[{}] sys_sigreturn", current_task().unwrap().process.pid.0);
     if let Some(task) = current_task() {
-        let mut inner = task.inner_exclusive_access();
-        inner.handling_sig = -1;
+        let mut process_inner = task.process.inner_exclusive_access();
+        process_inner.handling_sig = -1;
         // restore the trap context
-        let trap_ctx = inner.get_trap_cx();
-        *trap_ctx = inner.trap_ctx_backup.unwrap();
+        let backup = process_inner.trap_ctx_backup.unwrap();
+        drop(process_inner);
+
+        let trap_ctx = task.inner_exclusive_access().get_trap_cx();
+        *trap_ctx = backup;
         // Here we return the value of a0 in the trap_ctx,
         // otherwise it will be overwritten after we trap
         // back to the original execution of the application.
@@ -250,10 +253,10 @@ pub fn sys_sigaction(
     action: *const SignalAction,
     old_action: *mut SignalAction,
 ) -> isize {
-    trace!("kernel:pid[{}] sys_sigaction", current_task().unwrap().pid.0);
+    trace!("kernel:pid[{}] sys_sigaction", current_task().unwrap().process.pid.0);
     let token = current_user_token();
     let task = current_task().unwrap();
-    let mut inner = task.inner_exclusive_access();
+    let mut inner = task.process.inner_exclusive_access();
     if signum as usize > MAX_SIG {
         return -1;
     }

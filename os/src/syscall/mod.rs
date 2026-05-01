@@ -60,12 +60,44 @@ const SYSCALL_MMAP: usize = 222;
 const SYSCALL_WAITPID: usize = 260;
 /// spawn syscall
 const SYSCALL_SPAWN: usize = 400;
+/// sleep syscall
+const SYSCALL_SLEEP: usize = 101;
+/// gettid syscall
+const SYSCALL_GETTID: usize = 178;
+/// thread_create syscall
+const SYSCALL_THREAD_CREATE: usize = 460;
+/// waittid syscall
+const SYSCALL_WAITTID: usize = 462;
+/// mutex_create syscall
+const SYSCALL_MUTEX_CREATE: usize = 463;
+/// mutex_lock syscall
+const SYSCALL_MUTEX_LOCK: usize = 464;
+/// mutex_unlock syscall
+const SYSCALL_MUTEX_UNLOCK: usize = 466;
+/// semaphore_create syscall
+const SYSCALL_SEMAPHORE_CREATE: usize = 467;
+/// semaphore_up syscall
+const SYSCALL_SEMAPHORE_UP: usize = 468;
+/// semaphore_down syscall
+const SYSCALL_SEMAPHORE_DOWN: usize = 470;
+/// condvar_create syscall
+const SYSCALL_CONDVAR_CREATE: usize = 471;
+/// condvar_signal syscall
+const SYSCALL_CONDVAR_SIGNAL: usize = 472;
+/// condvar_wait syscall
+const SYSCALL_CONDVAR_WAIT: usize = 473;
+/// enable_deadlock_detect syscall
+const SYSCALL_ENABLE_DEADLOCK_DETECT: usize = 469;
 
 mod fs;
 mod process;
+mod thread;
+mod sync;
 
 use fs::*;
 use process::*;
+use thread::*;
+use sync::*;
 
 use crate::{fs::Stat, task::SignalAction};
 
@@ -101,6 +133,20 @@ pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {
         SYSCALL_SBRK => sys_sbrk(args[0] as i32),
         SYSCALL_SPAWN => sys_spawn(args[0] as *const u8),
         SYSCALL_SET_PRIORITY => sys_set_priority(args[0] as isize),
+        SYSCALL_SLEEP => sys_sleep(args[0]),
+        SYSCALL_GETTID => sys_gettid(),
+        SYSCALL_THREAD_CREATE => sys_thread_create(args[0], args[1]),
+        SYSCALL_WAITTID => sys_waittid(args[0]),
+        SYSCALL_MUTEX_CREATE => sys_mutex_create(args[0] != 0),
+        SYSCALL_MUTEX_LOCK => sys_mutex_lock(args[0]),
+        SYSCALL_MUTEX_UNLOCK => sys_mutex_unlock(args[0]),
+        SYSCALL_SEMAPHORE_CREATE => sys_semaphore_create(args[0]),
+        SYSCALL_SEMAPHORE_UP => sys_semaphore_up(args[0]),
+        SYSCALL_SEMAPHORE_DOWN => sys_semaphore_down(args[0]),
+        SYSCALL_CONDVAR_CREATE => sys_condvar_create(),
+        SYSCALL_CONDVAR_SIGNAL => sys_condvar_signal(args[0]),
+        SYSCALL_CONDVAR_WAIT => sys_condvar_wait(args[0], args[1]),
+        SYSCALL_ENABLE_DEADLOCK_DETECT => sys_enable_deadlock_detect(args[0]),
         _ => panic!("Unsupported syscall_id: {}", syscall_id),
     }
 }

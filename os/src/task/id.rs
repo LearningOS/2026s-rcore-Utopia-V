@@ -44,7 +44,9 @@ lazy_static! {
     static ref PID_ALLOCATOR: UPSafeCell<RecycleAllocator> =
         unsafe { UPSafeCell::new(RecycleAllocator::new()) };
     static ref KSTACK_ALLOCATOR: UPSafeCell<RecycleAllocator> =
-        unsafe { UPSafeCell::new(RecycleAllocator::new()) };    
+        unsafe { UPSafeCell::new(RecycleAllocator::new()) };
+    static ref TID_ALLOCATOR: UPSafeCell<RecycleAllocator> =
+        unsafe { UPSafeCell::new(RecycleAllocator::new()) };
 }
 
 /// Abstract structure of PID
@@ -52,14 +54,22 @@ pub struct PidHandle(pub usize);
 
 impl Drop for PidHandle {
     fn drop(&mut self) {
-        //println!("drop pid {}", self.0);
         PID_ALLOCATOR.exclusive_access().dealloc(self.0);
     }
 }
 
+/// TID 抽象结构
+pub struct TidHandle(pub usize);
+
 /// Allocate a new PID
 pub fn pid_alloc() -> PidHandle {
     PidHandle(PID_ALLOCATOR.exclusive_access().alloc())
+}
+
+/// 分配新的 TID（备用，目前 TID 由进程内计数器分配）
+#[allow(dead_code)]
+pub fn tid_alloc() -> TidHandle {
+    TidHandle(TID_ALLOCATOR.exclusive_access().alloc())
 }
 
 /// Return (bottom, top) of a kernel stack in kernel space.

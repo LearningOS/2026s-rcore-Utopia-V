@@ -1,77 +1,27 @@
 use crate::{
-    mm::kernel_token,
-    task::{add_task, current_task, TaskControlBlock},
-    trap::{trap_handler, TrapContext},
+    task::{TaskStatus, add_task, current_task, TaskControlBlock},
 };
-use alloc::sync::Arc;
 /// thread create syscall
 pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
     trace!(
         "kernel:pid[{}] tid[{}] sys_thread_create",
-        current_task().unwrap().process.upgrade().unwrap().getpid(),
-        current_task()
-            .unwrap()
-            .inner_exclusive_access()
-            .res
-            .as_ref()
-            .unwrap()
-            .tid
+        current_task().unwrap().process.pid.0,
+        current_task().unwrap().tid.0
     );
     let task = current_task().unwrap();
-    let process = task.process.upgrade().unwrap();
-    // create a new thread
-    let new_task = Arc::new(TaskControlBlock::new(
-        Arc::clone(&process),
-        task.inner_exclusive_access()
-            .res
-            .as_ref()
-            .unwrap()
-            .ustack_base,
-        true,
-    ));
-    // add new task to scheduler
-    add_task(Arc::clone(&new_task));
-    let new_task_inner = new_task.inner_exclusive_access();
-    let new_task_res = new_task_inner.res.as_ref().unwrap();
-    let new_task_tid = new_task_res.tid;
-    let mut process_inner = process.inner_exclusive_access();
-    // add new thread to current process
-    let tasks = &mut process_inner.tasks;
-    while tasks.len() < new_task_tid + 1 {
-        tasks.push(None);
-    }
-    tasks[new_task_tid] = Some(Arc::clone(&new_task));
-    let new_task_trap_cx = new_task_inner.get_trap_cx();
-    *new_task_trap_cx = TrapContext::app_init_context(
-        entry,
-        new_task_res.ustack_top(),
-        kernel_token(),
-        new_task.kstack.get_top(),
-        trap_handler as usize,
-    );
-    (*new_task_trap_cx).x[10] = arg;
-    new_task_tid as isize
+    let process = task.process.clone();
+    let new_task = TaskControlBlock::new_thread(process, entry, arg);
+    add_task(new_task.clone());
+    new_task.tid.0 as isize
 }
 /// get current thread id syscall
 pub fn sys_gettid() -> isize {
     trace!(
         "kernel:pid[{}] tid[{}] sys_gettid",
-        current_task().unwrap().process.upgrade().unwrap().getpid(),
-        current_task()
-            .unwrap()
-            .inner_exclusive_access()
-            .res
-            .as_ref()
-            .unwrap()
-            .tid
+        current_task().unwrap().process.pid.0,
+        current_task().unwrap().tid.0
     );
-    current_task()
-        .unwrap()
-        .inner_exclusive_access()
-        .res
-        .as_ref()
-        .unwrap()
-        .tid as isize
+    current_task().unwrap().tid.0 as isize
 }
 
 /// wait for a thread to exit syscall
@@ -79,42 +29,30 @@ pub fn sys_gettid() -> isize {
 /// thread does not exist, return -1
 /// thread has not exited yet, return -2
 /// otherwise, return thread's exit code
-pub fn sys_waittid(tid: usize) -> i32 {
+pub fn sys_waittid(tid: usize) -> isize {
     trace!(
         "kernel:pid[{}] tid[{}] sys_waittid",
-        current_task().unwrap().process.upgrade().unwrap().getpid(),
-        current_task()
-            .unwrap()
-            .inner_exclusive_access()
-            .res
-            .as_ref()
-            .unwrap()
-            .tid
+        current_task().unwrap().process.pid.0,
+        current_task().unwrap().tid.0
     );
     let task = current_task().unwrap();
-    let process = task.process.upgrade().unwrap();
-    let task_inner = task.inner_exclusive_access();
-    let mut process_inner = process.inner_exclusive_access();
-    // a thread cannot wait for itself
-    if task_inner.res.as_ref().unwrap().tid == tid {
+    if task.tid.0 == tid { return -1; }
+
+    let mut inner = task.process.inner_exclusive_access();
+
+    if tid >= inner.tasks.len() || inner.tasks[tid].is_none() {
         return -1;
     }
-    let mut exit_code: Option<i32> = None;
-    let waited_task = process_inner.tasks[tid].as_ref();
-    if let Some(waited_task) = waited_task {
-        if let Some(waited_exit_code) = waited_task.inner_exclusive_access().exit_code {
-            exit_code = Some(waited_exit_code);
-        }
+
+    let waited_task = inner.tasks[tid].as_ref().unwrap();
+    let waited_inner = waited_task.inner_exclusive_access();
+
+    if waited_inner.task_status == TaskStatus::Zombie {
+        let exit_code = waited_inner.exit_code;
+        drop(waited_inner);
+        inner.tasks[tid] = None;
+        exit_code as isize
     } else {
-        // waited thread does not exist
-        return -1;
-    }
-    if let Some(exit_code) = exit_code {
-        // dealloc the exited thread
-        process_inner.tasks[tid] = None;
-        exit_code
-    } else {
-        // waited thread has not exited
         -2
     }
 }
