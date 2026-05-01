@@ -12,11 +12,14 @@ pub trait Mutex: Sync + Send {
     fn lock(&self);
     /// Unlock the mutex
     fn unlock(&self);
+    /// Check if current thread already holds this mutex (for deadlock detection)
+    fn is_held_by_current(&self) -> bool;
 }
 
 /// Spinlock Mutex struct
 pub struct MutexSpin {
     locked: UPSafeCell<bool>,
+    holder: UPSafeCell<Option<usize>>,
 }
 
 impl MutexSpin {
@@ -24,6 +27,7 @@ impl MutexSpin {
     pub fn new() -> Self {
         Self {
             locked: unsafe { UPSafeCell::new(false) },
+            holder: unsafe { UPSafeCell::new(None) },
         }
     }
 }
@@ -40,6 +44,7 @@ impl Mutex for MutexSpin {
                 continue;
             } else {
                 *locked = true;
+                *self.holder.exclusive_access() = Some(current_task().unwrap().tid.0);
                 return;
             }
         }
@@ -49,6 +54,13 @@ impl Mutex for MutexSpin {
         trace!("kernel: MutexSpin::unlock");
         let mut locked = self.locked.exclusive_access();
         *locked = false;
+        *self.holder.exclusive_access() = None;
+    }
+
+    fn is_held_by_current(&self) -> bool {
+        let holder = self.holder.exclusive_access();
+        let current_tid = current_task().unwrap().tid.0;
+        *holder == Some(current_tid)
     }
 }
 
@@ -59,6 +71,7 @@ pub struct MutexBlocking {
 
 pub struct MutexBlockingInner {
     locked: bool,
+    holder: Option<usize>,
     wait_queue: VecDeque<Arc<TaskControlBlock>>,
 }
 
@@ -70,6 +83,7 @@ impl MutexBlocking {
             inner: unsafe {
                 UPSafeCell::new(MutexBlockingInner {
                     locked: false,
+                    holder: None,
                     wait_queue: VecDeque::new(),
                 })
             },
@@ -88,6 +102,7 @@ impl Mutex for MutexBlocking {
             block_current_and_run_next();
         } else {
             mutex_inner.locked = true;
+            mutex_inner.holder = Some(current_task().unwrap().tid.0);
         }
     }
 
@@ -97,9 +112,17 @@ impl Mutex for MutexBlocking {
         let mut mutex_inner = self.inner.exclusive_access();
         assert!(mutex_inner.locked);
         if let Some(waking_task) = mutex_inner.wait_queue.pop_front() {
+            mutex_inner.holder = Some(waking_task.tid.0);
             wakeup_task(waking_task);
         } else {
             mutex_inner.locked = false;
+            mutex_inner.holder = None;
         }
+    }
+
+    fn is_held_by_current(&self) -> bool {
+        let mutex_inner = self.inner.exclusive_access();
+        let current_tid = current_task().unwrap().tid.0;
+        mutex_inner.holder == Some(current_tid)
     }
 }

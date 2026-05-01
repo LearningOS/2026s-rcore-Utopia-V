@@ -128,6 +128,13 @@ pub struct ProcessControlBlockInner {
 
     /// 下一个可用的线程 TID（进程内）
     pub next_tid: usize,
+
+    /// 死锁检测开关
+    pub deadlock_detect_enabled: bool,
+
+    /// 每个线程持有的信号量资源分配矩阵
+    /// tid -> sem_id -> 持有数量
+    pub sem_alloc: Vec<Vec<isize>>,
 }
 
 impl TaskControlBlockInner {
@@ -200,6 +207,8 @@ impl TaskControlBlock {
                     condvar_list: Vec::new(),
                     next_ustack: user_sp,
                     next_tid: 1,
+                    deadlock_detect_enabled: false,
+                    sem_alloc: Vec::new(),
                 })
             }
         });
@@ -274,6 +283,8 @@ impl TaskControlBlock {
             process_inner.program_brk = original_user_sp;
             process_inner.next_ustack = original_user_sp;
             process_inner.next_tid = 1;
+            process_inner.deadlock_detect_enabled = false;
+            process_inner.sem_alloc = Vec::new();
         }
 
         // **** 独占访问当前 TCB
@@ -342,6 +353,8 @@ impl TaskControlBlock {
                     condvar_list: Vec::new(),
                     next_ustack: parent_inner.next_ustack,
                     next_tid: 1,
+                    deadlock_detect_enabled: false,
+                    sem_alloc: Vec::new(),
                 })
             }
         });
