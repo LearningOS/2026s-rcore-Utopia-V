@@ -23,8 +23,7 @@ jobs:
           git clone https://github.com/LearningOS/rCore-Tutorial-Checker.git ci-user
           git clone https://github.com/LearningOS/rCore-Tutorial-Test.git ci-user/user
           ID=`git rev-parse --abbrev-ref HEAD | grep -oP 'ch\K[0-9]'`
-          cd ci-user && make test CHAPTER=$ID passwd=${{ secrets.BASE_TEST_TOKEN }} OFFLINE=1 > ../output.txt 2>&1 || true
-          cat ../output.txt
+          cd ci-user && make test CHAPTER=$ID passwd=${{ secrets.BASE_TEST_TOKEN }} OFFLINE=1 2>&1 | tee ../output.txt || true
       - name: end
         id: end
         run: |
