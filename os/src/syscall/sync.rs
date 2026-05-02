@@ -121,8 +121,8 @@ pub fn sys_semaphore_up(sem_id: usize) -> isize {
     }
 
     // Note: sem.up() may wake a blocked thread; the woken thread's
-    // sem_wait_for will be cleared when it returns from sem.down().
-    sem.up();
+    // sem_wait_for is cleared inside up().
+    sem.up(Some(sem_id));
     0
 }
 

@@ -30,13 +30,26 @@ impl Semaphore {
     }
 
     /// up operation of semaphore
-    pub fn up(&self) {
+    /// sem_id is provided so we can clear sem_wait_for on wakeup
+    pub fn up(&self, sem_id: Option<usize>) {
         trace!("kernel: Semaphore::up");
         let mut inner = self.inner.exclusive_access();
         inner.count += 1;
         if inner.count <= 0 {
             if let Some(task) = inner.wait_queue.pop_front() {
+                let tid = task.tid.0;
+                drop(inner);
+                // Clear sem_wait_for so the woken thread is not misidentified as blocked
+                if let Some(sid) = sem_id {
+                    let mut process_inner = task.process.inner_exclusive_access();
+                    if tid < process_inner.sem_wait_for.len()
+                        && process_inner.sem_wait_for[tid] == Some(sid)
+                    {
+                        process_inner.sem_wait_for[tid] = None;
+                    }
+                }
                 wakeup_task(task);
+                return;
             }
         }
     }
