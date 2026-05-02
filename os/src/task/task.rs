@@ -135,6 +135,10 @@ pub struct ProcessControlBlockInner {
     /// 每个线程持有的信号量资源分配矩阵
     /// tid -> sem_id -> 持有数量
     pub sem_alloc: Vec<Vec<isize>>,
+
+    /// 每个线程正在等待的信号量（用于死锁检测）
+    /// tid -> Some(sem_id) 表示该线程阻塞在 sem_id 上
+    pub sem_wait_for: Vec<Option<usize>>,
 }
 
 impl TaskControlBlockInner {
@@ -209,6 +213,7 @@ impl TaskControlBlock {
                     next_tid: 1,
                     deadlock_detect_enabled: false,
                     sem_alloc: Vec::new(),
+                    sem_wait_for: Vec::new(),
                 })
             }
         });
@@ -285,6 +290,7 @@ impl TaskControlBlock {
             process_inner.next_tid = 1;
             process_inner.deadlock_detect_enabled = false;
             process_inner.sem_alloc = Vec::new();
+            process_inner.sem_wait_for = Vec::new();
         }
 
         // **** 独占访问当前 TCB
@@ -355,6 +361,7 @@ impl TaskControlBlock {
                     next_tid: 1,
                     deadlock_detect_enabled: false,
                     sem_alloc: Vec::new(),
+                    sem_wait_for: Vec::new(),
                 })
             }
         });
